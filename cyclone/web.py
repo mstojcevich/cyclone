@@ -1921,9 +1921,9 @@ class ChunkedTransferEncoding(OutputTransform):
             # Don't write out empty chunks because that means END-OF-STREAM
             # with chunked encoding
             if block:
-                block = "%s\r\n%s\r\n" % (utf8("%x" % len(block)), block)
+                block = b"%s\r\n%s\r\n" % (b"%x" % len(block), block)
             if finishing:
-                block = "%s0\r\n\r\n" % block
+                block = b"%s0\r\n\r\n" % block
         return block
 
 

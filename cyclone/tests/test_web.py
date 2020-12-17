@@ -16,6 +16,7 @@
 from twisted.trial import unittest
 from cyclone.web import RequestHandler, HTTPError
 from cyclone.web import Application, URLSpec, URLReverseError
+from cyclone.web import ChunkedTransferEncoding
 from cyclone.escape import unicode_type
 from unittest.mock import Mock
 from datetime import datetime
@@ -409,6 +410,43 @@ class TestRequestHandler(unittest.TestCase):
         page = yield self._execute_request(False)
         self.assertEqual(page, b"simple: it works!")
 
+    @defer.inlineCallbacks
+    def test_chunked_transfer_encoding(self):
+        """
+        Test that a response using chunked transfer encoding with multiple
+        chunks is correctly formed.
+        """
+        def get():
+            response_bytes = b"abcdefg\x00\xff"
+            chunk_size = 4
+            for i in range(0, len(response_bytes), chunk_size):
+                response_chunk = response_bytes[i : (i + chunk_size)]
+                self.handler.write(response_chunk)
+                self.handler.flush()
+
+        self.request.supports_http_1_1.return_value = True
+        self.handler.get = get
+        body = yield self._execute_request(False)
+
+        expected_body = (
+            # Chunk 1/3
+            b"4\r\n"  # 4 bytes in the chunk
+            b"abcd"  # chunk contents
+            b"\r\n"
+            # Chunk 2/3
+            b"4\r\n"  # 4 bytes in the chunk
+            b"efg\x00"  # chunk contents
+            b"\r\n"
+            # Chunk 3/3
+            b"1\r\n"  #  1 byte in the chunk
+            b"\xff"  # chunk contents
+            b"\r\n"
+            # End message
+            b"0"
+            b"\r\n\r\n"
+        )
+        self.assertEqual(body, expected_body)
+
     def setUp(self):
         self.app = app = Mock()
         app.ui_methods = {}
@@ -424,7 +462,7 @@ class TestRequestHandler(unittest.TestCase):
         request.method = "GET"
         request.version = "HTTP MOCK"
         request.notifyFinish.return_value = defer.Deferred()
-        request.supports_http_1_1.return_value = True
+        request.supports_http_1_1.return_value = False
 
         self.handler = RequestHandler(app, request)
         self._onFinishD = defer.Deferred()
@@ -454,7 +492,8 @@ class TestRequestHandler(unittest.TestCase):
         handler = self.handler
 
         handler._headers_written = True
-        handler._execute([])
+        transforms = [ChunkedTransferEncoding(self.request)]
+        handler._execute(transforms)
         yield self._onFinishD
         out = b""
         for (args, kwargs) in self.request.write.call_args_list:
